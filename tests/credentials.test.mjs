@@ -6,15 +6,18 @@ import { join } from 'node:path';
 import { validateCredentialFile } from '../dist/credentials.js';
 import { loadConfig } from '../dist/config.js';
 import { AcpWorker } from '../dist/acp-worker.js';
+import { makeRuntimeRoot } from './helpers.mjs';
 
 const fakeContent = 'version: 1\nrecords:\n  fixture/only:\n    kind: grant\n    payload: fixture-not-a-real-token\n';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-credential-tests-'));
+  const runtimeRoot = await makeRuntimeRoot();
   t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
   const path = join(root, '.credentials.yaml');
   await writeFile(path, fakeContent, { mode: 0o600 });
-  return { root, path };
+  return { root, path, runtimeRoot };
 }
 
 test('credential-file metadata validation returns its canonical path without modifying it', async t => {
@@ -110,6 +113,7 @@ test('worker composes the saved-credential reference and selected account route 
     DSH_MCP_MODEL: 'deepseek-flash',
     DSH_MCP_COMMAND: process.execPath,
     DSH_MCP_ARGS: JSON.stringify([fixturePath]),
+    DSH_MCP_RUNTIME_ROOT: context.runtimeRoot,
   });
   const worker = new AcpWorker(config, {
     ready() {}, update() {}, permission: async () => ({ outcome: { outcome: 'cancelled' } }),

@@ -44,7 +44,6 @@ Claude Desktop / Cursor / Codex 中的主 agent（例如 GPT-6 Astra）
 4. 用客户端配置启动；以下为 API key 模式的启动入口示意：
 
    ```bash
-   DSH_MCP_WORKSPACE_ROOTS='["/absolute/path/to/project"]' \
    DSH_MCP_COMMAND=/absolute/path/to/dsh \
    node --env-file=/absolute/protected.env /absolute/path/to/dsh-mcp-server/dist/index.js
    ```
@@ -84,13 +83,31 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
   /absolute/path/to/dsh-mcp-server/dist/index.js
 ```
 
-此命令只注册启动命令；仍需按 [Codex 示例](examples/codex.toml) 配置工作区等环境变量。配置完成后按各客户端要求重新连接或重启，再检查是否出现 `dsh_submit_task` 等工具。Skill 的安装不能代替 MCP 配置。
+此命令只注册启动命令；仍需按 [Codex 示例](examples/codex.toml) 配置 harness 路径和凭据等环境变量。配置完成后按各客户端要求重新连接或重启，再检查是否出现 `dsh_submit_task` 等工具。Skill 的安装不能代替 MCP 配置。
+
+## 每任务明确目录授权
+
+每次 `dsh_submit_task` 都必须传入 `workspace`，表示用户授权该任务修改的具体项目或 worktree 目录。它必须是已存在的绝对目录，不能是文件系统根目录；server 按真实路径校验，并在任务结果的 `workspace` 中回显规范化后的目录。主 agent 应检查这个回显，不能从 MCP 安装目录、server 当前目录或前一个任务继承授权，也不能自行改用范围更大的父目录。
+
+任务目录也不能包含或位于 MCP 私有运行目录内。启动 profile 属于控制配置，默认存放于 `~/.local/state/dsh-mcp-server/runs` 下的独立 `0700` 目录，而非 dsh 可写的系统临时区；任务结束后删除对应子目录。若通过 `DSH_MCP_RUNTIME_ROOT` 改位置，该目录也必须归当前用户所有、仅所有者可访问，且位于任务写目录和原生临时可写区域之外。
+
+不同任务可以指定不同目录。例如，委派某个 worktree 的任务时，传入：
+
+```json
+{"workspace":"/Users/kennethx/.codex/worktrees/background-cancel-deadline/kenotex"}
+```
+
+这里只展示目录字段；完整调用还需传入目标、相对文件范围等必填参数，见下一节。该任务的启动目录、ACP 会话目录和 harness 写权限根均绑定这个 worktree，不会自动获得父仓库或外部共享 `.git` 的写权限。
+
+客户端示例默认不设置 `DSH_MCP_WORKSPACE_ROOTS`，按每任务的明确目录授权运行。若管理员需要额外的常驻上限，可配置非空绝对目录数组；配置后每个任务仍需传入 `workspace`，且必须位于上限之内。显式空数组 `[]` 会被拒绝，不能用于解除限制。已有配置若仍固定为本 MCP 仓库，可移除该可选变量，或按实际管理范围调整；不要为了单次任务直接放宽到整个用户目录。
+
+这是**写入边界**：dsh 原生 `workspace-write` 仍允许目录外读取和部分平台临时区写入，不是严格的读写隔离。扩大到 `danger-full-access` 的权限请求，以及无法确认完整输入上下文的请求，会被桥接器自动拒绝；正常的范围内请求仍走一次性审批。
 
 ## Astra 规划、Flash 执行
 
 在客户端选择你希望负责规划的主模型，再请求：
 
-> 先规划这个项目的改动，拆成可验收的小任务。通过 DeepSeek Harness MCP 把执行任务交给 Flash，保留当前工作区已有修改。每次明确允许修改的文件、约束和验收标准；收到结果后由你检查 diff 并运行必要验证。
+> 先规划这个项目的改动，拆成可验收的小任务。通过 DeepSeek Harness MCP 把执行任务交给 Flash，保留当前工作区已有修改。每次明确授权的项目或 worktree 目录、允许修改的文件、约束和验收标准；收到结果后由你检查 diff 并运行必要验证。
 
 主 agent 调用工具的真实参数形状：
 
@@ -105,7 +122,7 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
 }
 ```
 
-将上述对象传给 `dsh_submit_task`，取得 `task_id` 后用 `dsh_get_task({"task_id":"返回的任务 ID","wait_ms":10000})` 等待。遇到 `awaiting_permission` 时先查看 `pending_permissions`，根据用户已有授权判断具体请求，再调用 `dsh_respond_permission` 一次性批准或拒绝；授权不足时先向用户说明具体操作。不要因使用 delegation skill 自动批准所有权限。
+将上述对象传给 `dsh_submit_task`，先核对返回的 `workspace` 与本次授权目录一致，取得 `task_id` 后用 `dsh_get_task({"task_id":"返回的任务 ID","wait_ms":10000})` 等待。遇到 `awaiting_permission` 时先查看 `pending_permissions`，根据用户已有授权判断具体请求，再调用 `dsh_respond_permission` 一次性批准或拒绝；授权不足时先向用户说明具体操作。不要因使用 delegation skill 自动批准所有权限。
 
 任务完成后主 agent 检查 `result`、`tool_calls`、`output_truncated` 和失败信息，并在实际工作区检查改动与验收结果。`acceptance_checks` 是给 worker 的指令，不是 server 自动执行的 shell 命令。
 
@@ -127,7 +144,8 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
 
 | 环境变量 | 含义 | 默认值 |
 | --- | --- | --- |
-| `DSH_MCP_WORKSPACE_ROOTS` | 允许接受任务的绝对目录数组，JSON；必填 | 无 |
+| `DSH_MCP_WORKSPACE_ROOTS` | 可选的任务目录管理上限，非空绝对目录数组，JSON；不能替代每次必填的 `workspace` | 不设额外上限 |
+| `DSH_MCP_RUNTIME_ROOT` | 私有启动配置根目录，绝对路径；必须与任务目录及临时可写区域分离 | `~/.local/state/dsh-mcp-server/runs` |
 | `DSH_MCP_COMMAND` | 官方 harness 的可执行文件路径或命令名 | `dsh` |
 | `DSH_MCP_ARGS` | 启动参数数组，JSON | `["--profile","acp"]` |
 | `DSH_MCP_MODEL` | 交给 harness 的模型标识 | `deepseek-v4-flash` |
@@ -137,9 +155,9 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
 | `DSH_MCP_TIMEOUT_SECONDS` | 未单独指定时的任务时限，1–3600 秒 | `600` |
 | `DEEPSEEK_API_KEY` | 官方 DeepSeek API 凭据，从 MCP 进程环境读取 | 无 |
 
-server 只接受配置根目录及其子目录中的工作区，按真实路径校验；每个任务有独立的临时 harness home，并强制使用 `DSH_PERMISSION_MODE=workspace-write`。默认最多同时运行 2 个任务；同一个或相互嵌套的工作区不能并发执行。该锁仅覆盖单个 server 进程，不协调多个客户端启动的独立实例。
+server 每次根据必填 `workspace` 校验本任务的真实目录；配置了 `DSH_MCP_WORKSPACE_ROOTS` 时，再校验其是否位于管理上限内。每个任务有独立的临时 harness home，固定使用 `DSH_PERMISSION_MODE=workspace-write`，写权限根为本次目录且不附加额外可写根。默认最多同时运行 2 个任务；同一个或相互嵌套的工作区不能并发执行。该锁仅覆盖单个 server 进程，不协调多个客户端启动的独立实例。
 
-`allowed_paths` 是交给 worker 的改动范围指令，**不是按文件强制的访问沙箱**。任务入口校验也不等于约束每条 shell 命令；实际运行隔离依赖官方 harness 的操作系统沙箱。客户端自身的沙箱不会自动传递给 MCP 子进程。需要严格按文件隔离时，应使用单独 checkout/受控运行环境，不能仅依赖提示词。
+`allowed_paths` 是交给 worker 的改动范围指令，**不是按文件强制的访问沙箱**。目录写入限制由官方 harness 的文件和操作系统沙箱执行，保留原生临时区例外；目录外读取仍可能发生。客户端自身的沙箱不会自动传递给 MCP 子进程。需要严格按文件隔离时，应使用单独 checkout/受控运行环境，不能仅依赖提示词。
 
 任务默认上限 600 秒，最大 3600 秒；等待权限也计入上限。模型身份和可用性以实际 DeepSeek 账户与 harness 支持为准，修改环境变量不会替用户开通模型权限。
 
@@ -166,7 +184,7 @@ npm run check:package
 DSH_SMOKE_COMMAND=/absolute/path/to/dsh npm run test:harness
 ```
 
-该测试用真实 harness 连接临时本地模型服务，通过 MCP 提交任务、选择 Flash 路由、执行原生文件写入，再用 bash 读取校验；只用虚构凭据，不调用外部模型、不产生 API 费用。它验证真实 harness 集成，不能证明真实 DeepSeek 账户和网络已可用。当前本机运行验证基于 macOS，CI 配置覆盖 Linux/macOS；Windows 尚未验证。
+该测试用真实 harness 连接临时本地模型服务，通过 MCP 按任务指定目录、选择 Flash 路由、执行原生文件写入，再用 bash 读取校验；同时检查向相邻目录写入和 `danger-full-access` 升级都被拒绝。只用虚构凭据，不调用外部模型、不产生 API 费用。它验证真实 harness 集成，不能证明真实 DeepSeek 账户和网络已可用。当前本机运行验证基于 macOS，CI 配置覆盖 Linux/macOS；Windows 尚未验证。
 
 ## 官方参考
 

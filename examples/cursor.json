@@ -9,7 +9,6 @@
       ],
       "env": {
         "DSH_MCP_COMMAND": "/absolute/path/to/dsh",
-        "DSH_MCP_WORKSPACE_ROOTS": "[\"/absolute/path/to/project\"]",
         "DSH_MCP_MODEL": "deepseek-v4-flash",
         "DSH_MCP_PROVIDER": "deepseek-official"
       }

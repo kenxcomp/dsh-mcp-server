@@ -5,7 +5,7 @@ import { createServer } from './server.js';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) {
-    process.stdout.write('dsh-mcp-server: local MCP stdio bridge to DeepSeek Harness ACP\nRequired: DSH_MCP_WORKSPACE_ROOTS (JSON array of absolute directories)\nOptional: DSH_MCP_COMMAND, DSH_MCP_ARGS, DSH_MCP_MODEL, DSH_MCP_PROVIDER,\n          DSH_MCP_TIMEOUT_SECONDS, DSH_MCP_MAX_CONCURRENCY, DEEPSEEK_API_KEY,\n          DSH_MCP_CREDENTIALS_FILE (existing Harness store; explicit opt-in)\nSee README.md for client setup.\n');
+    process.stdout.write('dsh-mcp-server: local MCP stdio bridge to DeepSeek Harness ACP\nEach task requires an explicit absolute workspace directory authorization.\nOptional: DSH_MCP_WORKSPACE_ROOTS (JSON directory array; admission upper bound),\n          DSH_MCP_RUNTIME_ROOT (private control directory outside workspaces/temp),\n          DSH_MCP_COMMAND, DSH_MCP_ARGS, DSH_MCP_MODEL, DSH_MCP_PROVIDER,\n          DSH_MCP_TIMEOUT_SECONDS, DSH_MCP_MAX_CONCURRENCY, DEEPSEEK_API_KEY,\n          DSH_MCP_CREDENTIALS_FILE (existing Harness store; explicit opt-in)\nSee README.md for client setup.\n');
     return;
   }
   const config = await loadConfig();

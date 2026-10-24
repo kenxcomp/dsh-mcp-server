@@ -5,11 +5,12 @@ import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { repo } from './helpers.mjs';
+import { repo, makeRuntimeRoot } from './helpers.mjs';
 
 test('a completed worker releases inherited stdio even when an independent background process keeps it open',
   { skip: process.platform === 'win32', timeout: 12_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-worker-pipes-'));
+    const runtimeRoot = await makeRuntimeRoot();
     const fixture = join(root, 'agent.mjs');
     const wrapper = join(root, 'worker.mjs');
     const statePath = join(root, 'runtime.json');
@@ -32,6 +33,7 @@ test('a completed worker releases inherited stdio even when an independent backg
       child?.stdout.destroy();
       child?.stderr.destroy();
       await rm(root, { recursive: true, force: true });
+      await rm(runtimeRoot, { recursive: true, force: true });
     });
     await writeFile(fixture, `
       import { createInterface } from 'node:readline';
@@ -66,6 +68,7 @@ test('a completed worker releases inherited stdio even when an independent backg
       const worker = new AcpWorker({
         command: process.execPath, args: [${JSON.stringify(fixture)}],
         provider: 'deepseek-official', model: 'deepseek-v4-flash',
+        runtimeRoot: ${JSON.stringify(runtimeRoot)},
         childEnv: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture-only-not-real' },
       }, { ready() {}, update() {}, permission: async () => ({ outcome: { outcome: 'cancelled' } }) });
       const reason = await worker.run({ workspace: ${JSON.stringify(root)}, objective: 'Fixture only', allowed_paths: ['.'] });

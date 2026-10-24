@@ -1,10 +1,12 @@
 import { realpath, stat } from 'node:fs/promises';
-import { isAbsolute, relative, sep } from 'node:path';
+import { isAbsolute, parse } from 'node:path';
 import { z } from 'zod';
 import { validateCredentialFile } from './credentials.js';
+import { contains } from './paths.js';
+import { assertSeparateRuntimeRoot, defaultRuntimeRoot } from './runtime-home.js';
 
 export interface Config {
-  roots: string[];
+  roots?: string[];
   command: string;
   args: string[];
   provider: string;
@@ -14,6 +16,7 @@ export interface Config {
   timeoutSeconds: number;
   childEnv: NodeJS.ProcessEnv;
   credentialsFile?: string;
+  runtimeRoot: string;
 }
 
 function stringArray(value: string | undefined, name: string, fallback?: string[], minimum = 1): string[] {
@@ -33,11 +36,6 @@ function integer(value: string | undefined, fallback: number, max: number, name:
   return result;
 }
 
-export function contains(root: string, candidate: string): boolean {
-  const path = relative(root, candidate);
-  return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
-}
-
 export async function directory(path: string): Promise<string> {
   if (!isAbsolute(path)) throw new Error('Workspace paths must be absolute');
   const canonical = await realpath(path);
@@ -46,9 +44,12 @@ export async function directory(path: string): Promise<string> {
 }
 
 export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<Config> {
-  const roots = await Promise.all(stringArray(env.DSH_MCP_WORKSPACE_ROOTS, 'DSH_MCP_WORKSPACE_ROOTS').map(directory));
+  const roots = env.DSH_MCP_WORKSPACE_ROOTS === undefined ? undefined
+    : await Promise.all(stringArray(env.DSH_MCP_WORKSPACE_ROOTS, 'DSH_MCP_WORKSPACE_ROOTS').map(directory));
   const credentialsFile = env.DSH_MCP_CREDENTIALS_FILE === undefined ? undefined
     : await validateCredentialFile(env.DSH_MCP_CREDENTIALS_FILE);
+  const runtimeRoot = env.DSH_MCP_RUNTIME_ROOT ?? defaultRuntimeRoot();
+  if (!isAbsolute(runtimeRoot)) throw new Error('DSH_MCP_RUNTIME_ROOT must be absolute');
   // Only explicitly needed environment crosses into the worker. In particular,
   // ambient cloud/provider tokens and NODE_OPTIONS are not inherited.
   const childEnv: NodeJS.ProcessEnv = {};
@@ -57,7 +58,7 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
     if (env[key] !== undefined) childEnv[key] = env[key];
   }
   return {
-    roots: [...new Set(roots)],
+    roots: roots === undefined ? undefined : [...new Set(roots)],
     command: env.DSH_MCP_COMMAND || 'dsh',
     args: stringArray(env.DSH_MCP_ARGS, 'DSH_MCP_ARGS', ['--profile', 'acp'], 0),
     provider: env.DSH_MCP_PROVIDER || 'deepseek-official',
@@ -67,13 +68,18 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
     timeoutSeconds: integer(env.DSH_MCP_TIMEOUT_SECONDS, 600, 3600, 'DSH_MCP_TIMEOUT_SECONDS'),
     childEnv,
     credentialsFile,
+    runtimeRoot,
   };
 }
 
 export async function workspace(config: Config, requested: string): Promise<string> {
   const canonical = await directory(requested);
-  if (!config.roots.some(root => contains(root, canonical))) {
+  if (canonical === parse(canonical).root) {
+    throw new Error('Task workspace must be a specific project directory, not a filesystem root');
+  }
+  if (config.roots && !config.roots.some(root => contains(root, canonical))) {
     throw new Error('Workspace is outside DSH_MCP_WORKSPACE_ROOTS');
   }
+  await assertSeparateRuntimeRoot(canonical, config.runtimeRoot);
   return canonical;
 }

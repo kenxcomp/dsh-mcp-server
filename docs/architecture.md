@@ -39,9 +39,15 @@ MCP stdio server
 
 ## 工作区、并发和文件范围
 
-`DSH_MCP_WORKSPACE_ROOTS` 是 server 管理者配置的任务入口允许列表。server 校验工作区真实路径，不能通过相似前缀或符号链接把根目录之外的目录当作允许任务工作区。
+每次 `dsh_submit_task.workspace` 是本次人类任务授权的具体项目或 worktree 目录，不能缺省或继承 server cwd、安装目录、先前任务的目录。server 要求绝对、已有目录，拒绝文件系统根目录，并规范化真实路径。返回的 `TaskView.workspace` 回显该目录，供主 agent 核对。不同任务可以授权不同目录。
 
-这个列表控制“在哪些目录启动任务”，不等于自行实现所有文件读写和终端命令的 OS 级隔离。子进程强制 `DSH_PERMISSION_MODE=workspace-write`，实际沙箱能力和平台差异由官方 harness 实现。启动 MCP 的客户端所使用的沙箱，并不会自动覆盖外部 server 或其子进程。
+`DSH_MCP_WORKSPACE_ROOTS` 仅是可选的管理员上限。未配置时按每任务明确的 `workspace` 授权；配置时要求非空目录数组，再执行包含校验，不能通过相似前缀或逃逸符号链接绕过上限。显式 `[]` 拒绝，而非解释为不设上限。
+
+每任务独立的进程启动 cwd、ACP `session/new.cwd` 和临时 profile 中的 `sandbox-policy.workspaceRoot` 使用同一个规范化目录。profile 固定 `workspace-write`，`additionalWritableRoots` 为空；不附加父仓库或 linked worktree 的外部共享 `.git`。目录入口上限不会被当成任务的写权限根，因此两个位于同一管理员上限下的任务也不共享目录授权。
+
+启动 profile 不放在原生沙箱可写的共享临时区域内。MCP 在 `~/.local/state/dsh-mcp-server/runs`（可由 `DSH_MCP_RUNTIME_ROOT` 指定）创建独立 `0700` 控制目录作为本次 `DSH_HOME`，profile 权限为 `0600`，结束后移除。运行根必须归当前用户所有、仅所有者可访问，且不能是符号链接、位于原生临时写区域内或与任务工作区交叠。这样保留临时数据写入能力，同时把启动策略从任务的可写数据区域中分离。目录外读取仍按原生能力开放，不宣称同一 OS 用户下的读取隔离。
+
+实际写入限制依赖官方 harness 的文件和操作系统沙箱，并保留其平台临时区写入例外。`workspace-write` 不限制目录外读取，不能宣称严格的读写隔离。启动 MCP 的客户端沙箱不会自动覆盖外部 server 或其子进程；需要严格读写隔离时须另行使用受控运行环境。
 
 `allowed_paths`、`constraints` 和 `acceptance_checks` 会进入 worker prompt。`allowed_paths` 是任务意图约束，不能充当强制文件访问控制；`acceptance_checks` 不由桥接器解释或直接执行。需要强隔离时使用受控 checkout、容器或 OS 权限等真实边界，再由主 agent 检查 diff。
 
@@ -51,11 +57,13 @@ MCP stdio server
 
 每个任务创建独立临时 `DSH_HOME`，不复用用户 profile 或会话。凭据有两条显式路径：API key 从可信 MCP 进程环境提供；或通过 `DSH_MCP_CREDENTIALS_FILE` 引用现有官方凭据存储。未设置该变量时不自动读取用户 `~/.dsh` 的存储。API key 示例借助 Node `--env-file` 读取仓库外的受保护环境文件，客户端配置本身不包含密钥。
 
-引用存储时，桥接器仅校验绝对路径、常规文件、当前用户归属及 POSIX owner-only 权限，不读取或解析文件内容。它在每任务临时 `profiles/acp/cordis.patch.yml` 写入 JSON（合法的 YAML 子集），把 `credentials` provider 的 `path` 指向该文件，并关闭该 worker 的文件 watcher；同时设置 `acp` 的初始 provider/model。原凭据不复制到临时 home，也不由桥接器导出为环境变量。
+每任务临时 `profiles/acp/cordis.patch.yml` 都写入 JSON（合法的 YAML 子集），固定本次 `sandbox-policy` 和 `acp` 的初始 provider/model。引用存储时，桥接器仅校验绝对路径、常规文件、当前用户归属及 POSIX owner-only 权限，不读取或解析文件内容；另把 `credentials` provider 的 `path` 指向该文件，并关闭该 worker 的文件 watcher。原凭据不复制到临时 home，也不由桥接器导出为环境变量。
 
 官方 harness 负责读取和解析该存储，以及正常的账号刷新；刷新可能写回原文件，由其跨进程写锁协调。临时 home 的会话隔离不代表凭据存储隔离。此模式应仅指向当前用户授权使用的存储，不能据此把本服务当成其他用户的账号代理。
 
-ACP 权限请求被映射为 `pending_permissions`。桥接器不因 worker 文本声称“已授权”就批准；上层 agent 检查具体请求与用户授权，随后对该请求使用 `allow_once` 或 `reject_once`。没有批量永久授权。来自 worker 的内容、工具活动及权限描述均是待检查的数据，不能提升其优先级覆盖用户或客户端约束。
+ACP 权限先经过任务范围校验。worker 从完整、未截断的 `tool_call` 输入保存有界的范围判断；不能用已截断的返回记录判断权限。请求扩大到 `danger-full-access` 或未知模式时自动拒绝，缺失或无法确认完整输入上下文时同样拒绝，不能通过 `dsh_respond_permission` 扩大本次目录。
+
+正常的范围内 ACP 权限请求被映射为 `pending_permissions`。桥接器不因 worker 文本声称“已授权”就批准；上层 agent 检查具体请求与用户授权，随后对该请求使用 `allow_once` 或 `reject_once`。没有批量永久授权。来自 worker 的内容、工具活动及权限描述均是待检查的数据，不能提升其优先级覆盖用户或客户端约束。
 
 模型和 provider 默认固定为 `deepseek-v4-flash` / `deepseek-official`；可由 server 环境配置更改。官方 API key 和 dsh 账号登录是两种认证路径，账号登录示例使用 `deepseek-account` / `deepseek-flash`，按对应账号额度和计费规则调用。两条路径都必须匹配实际广告的模型选项，不做静默回退。主客户端用什么模型不在桥接器控制范围内。账户权限、网络可达性、模型计费和可用性仍由实际服务决定。
 

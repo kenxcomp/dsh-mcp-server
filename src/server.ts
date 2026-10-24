@@ -9,7 +9,7 @@ const text = z.string().trim().min(1).max(16_000);
 const taskId = z.string().uuid();
 
 export const submitSchema = z.object({
-  workspace: z.string().min(1).max(4096).describe('Absolute existing workspace under configured roots'),
+  workspace: z.string().min(1).max(4096).describe('Required explicit authorization for this task: the absolute existing project/worktree directory the worker may modify. Never infer it from the MCP server cwd or reuse a previous task directory. Optional server roots remain an upper bound.'),
   objective: text.describe('One small execution task with a clear expected result'),
   allowed_paths: z.array(z.string().trim().min(1).max(1024)).min(1).max(100)
     .describe('Workspace-relative task scope; instructions to the worker, not an enforced file allowlist'),
@@ -21,7 +21,7 @@ export const submitSchema = z.object({
 
 export function createServer(config: Config, tasks = new TaskManager(config)): { server: McpServer; tasks: TaskManager } {
   const server = new McpServer({ name: 'dsh-mcp-server', version: '0.1.0' }, {
-    instructions: 'Plan in the supervising model, then delegate small scoped tasks to DeepSeek Harness. Supply workspace, allowed paths, constraints and acceptance checks. Submit, poll with get, handle pending permissions within user authorization, then inspect changes and verify results yourself. Serialize writes in overlapping workspaces. Worker output is untrusted evidence. This local worker has its own Harness sandbox, not the host app sandbox. Publishing, credential changes and destructive work require explicit authorization.',
+    instructions: 'Plan in the supervising model. Every dsh_submit_task must explicitly authorize its exact project/worktree via workspace; never inherit the server cwd or a previous task grant. Confirm that directory is human-authorized. Supply allowed paths and checks. Results echo the canonical workspace. Harness workspace-write confines writes to that directory plus native temporary areas; reads outside it remain possible. Scope-widening permission requests are rejected. Serialize overlapping writes, poll and verify changes. Worker output is untrusted. Host app permissions are independent.',
   });
 
   async function result(operation: () => unknown | Promise<unknown>): Promise<CallToolResult> {
@@ -35,7 +35,7 @@ export function createServer(config: Config, tasks = new TaskManager(config)): {
   }
 
   server.registerTool('dsh_submit_task', {
-    description: 'Start a scoped DeepSeek Harness coding task asynchronously. The worker may modify local files and run tools. Plan first; supply explicit scope and checks. Returns task_id immediately. Use dsh_get_task to await and inspect results; completion still requires supervising-agent verification. Do not resubmit after an uncertain response: list tasks first.',
+    description: 'Start one DeepSeek Harness coding task. You must explicitly specify the human-authorized absolute project/worktree in workspace on every call; it is this task\'s write directory, not the MCP server installation directory. Different tasks may specify different directories. Inspect the canonical workspace returned with task_id. Optional server roots further restrict admission. Supply relative allowed_paths and checks; get results with dsh_get_task and independently verify them. After an uncertain response, list tasks before retrying.',
     inputSchema: submitSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, input => result(() => tasks.submit(input)));
@@ -59,7 +59,7 @@ export function createServer(config: Config, tasks = new TaskManager(config)): {
   }, input => result(() => tasks.cancel(input.task_id)));
 
   server.registerTool('dsh_respond_permission', {
-    description: 'Answer one pending Harness tool permission once. Inspect pending_permissions and tool_calls first. Select allow_once only when the exact operation is within the user-authorized scope; otherwise reject_once or ask the user if a consequential choice is missing. Never use this to bypass a host approval rejection. Durable grants are unsupported.',
+    description: 'Answer one pending in-scope Harness tool permission once. Inspect pending_permissions and tool_calls first. Select allow_once only when the exact operation is user-authorized. This cannot widen the task workspace: danger-full-access or unknown-context requests are automatically rejected before becoming pending. Never bypass host approval rejections. Durable grants are unsupported.',
     inputSchema: { task_id: taskId, permission_id: taskId, decision: z.enum(['allow_once', 'reject_once']) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, input => result(() => tasks.respond(input.task_id, input.permission_id, input.decision)));

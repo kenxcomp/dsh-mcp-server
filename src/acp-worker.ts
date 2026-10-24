@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -8,6 +7,8 @@ import { client, methods, ndJsonStream, PROTOCOL_VERSION,
   type ClientConnection, type SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { Config } from './config.js';
 import { SecretStream } from './redaction.js';
+import { TaskPermissions } from './task-permissions.js';
+import { createRuntimeHome } from './runtime-home.js';
 import type { TaskInput, Worker, WorkerHooks } from './types.js';
 
 function choices(option: SessionConfigOption): Array<{ value: string; name: string }> {
@@ -31,6 +32,7 @@ export function selectModel(options: SessionConfigOption[], provider: string, mo
 export function taskPrompt(input: TaskInput): string {
   return [
     'Execute this scoped task for a supervising agent. Follow the workspace instructions.',
+    `Task-authorized directory: ${JSON.stringify(input.workspace)}. Only modify files under this directory. This authorization belongs to this task alone; it does not carry over from or to other tasks. Do not widen the directory or request unrestricted access.`,
     'Preserve existing changes. Do not commit, push, publish, change credentials, or broaden scope unless explicitly authorized in the task.',
     'Allowed paths and checks below are task instructions. Stop and report if the requested work requires other paths or permissions.',
     `Objective:\n${input.objective}`,
@@ -50,6 +52,7 @@ export class AcpWorker implements Worker {
   private stopPromise?: Promise<void>;
   private stopping = false;
   private stderr = '';
+  private permissions = new TaskPermissions();
 
   constructor(private readonly config: Config, private readonly hooks: WorkerHooks) {}
 
@@ -58,18 +61,20 @@ export class AcpWorker implements Worker {
       if (this.config.provider === 'deepseek-official' && !this.config.childEnv.DEEPSEEK_API_KEY && !this.config.credentialsFile) {
         throw new Error('DEEPSEEK_API_KEY is missing. Supply a protected env file or explicitly set DSH_MCP_CREDENTIALS_FILE to reuse the Harness credential store.');
       }
-      this.home = await mkdtemp(join(tmpdir(), 'dsh-mcp-'));
+      this.home = await createRuntimeHome(this.config.runtimeRoot, input.workspace, this.config.childEnv);
+      const profile = join(this.home, 'profiles', 'acp');
+      await mkdir(profile, { recursive: true, mode: 0o700 });
+      const patch: Array<{ id: string; config: Record<string, unknown> }> = [
+        { id: 'sandbox-policy', config: { mode: 'workspace-write', workspaceRoot: input.workspace, additionalWritableRoots: [] } },
+        { id: 'acp', config: { provider: this.config.provider, model: this.config.model } },
+      ];
       if (this.config.credentialsFile) {
-        const profile = join(this.home, 'profiles', 'acp');
-        await mkdir(profile, { recursive: true, mode: 0o700 });
-        // JSON is a YAML subset. Only reference the existing store; never parse,
-        // copy or export its contents. Harness owns credential resolution and
-        // any normal account refresh under its cross-process writer lock.
-        await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify([
-          { id: 'credentials', config: { path: this.config.credentialsFile, watch: false } },
-          { id: 'acp', config: { provider: this.config.provider, model: this.config.model } },
-        ]), { mode: 0o600 });
+        // Reference the original store; Harness owns parsing and token refresh.
+        patch.push({ id: 'credentials', config: { path: this.config.credentialsFile, watch: false } });
       }
+      // JSON is a YAML subset. Each task pins its own write root, independently
+      // of optional server admission roots or credentials shared with other tasks.
+      await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify(patch), { mode: 0o600 });
       if (this.stopping) throw new Error('Task cancelled before startup');
       const child = spawn(this.config.command, this.config.args, {
         cwd: input.workspace,
@@ -99,11 +104,19 @@ export class AcpWorker implements Worker {
         Readable.toWeb(child.stdout) as unknown as Parameters<typeof ndJsonStream>[1]);
       this.connection = client({ name: 'dsh-mcp-server' })
         .onNotification(methods.client.session.update, ({ params }) => {
-          if (params.sessionId === this.sessionId) this.hooks.update(params);
+          if (params.sessionId === this.sessionId) {
+            this.permissions.observe(params.update);
+            this.hooks.update(params);
+          }
         })
         .onRequest(methods.client.session.requestPermission, ({ params }) => {
           if (this.stopping || params.sessionId !== this.sessionId) {
             return { outcome: { outcome: 'cancelled' as const } };
+          }
+          if (!this.permissions.mayAsk(params)) {
+            const reject = params.options.find(option => option.kind === 'reject_once');
+            return reject ? { outcome: { outcome: 'selected' as const, optionId: reject.optionId } }
+              : { outcome: { outcome: 'cancelled' as const } };
           }
           return this.hooks.permission(params);
         })

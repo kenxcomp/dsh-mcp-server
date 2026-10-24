@@ -12,8 +12,11 @@ export const fixture = join(repo, 'tests/fixtures/acp-agent.mjs');
 export const fixtureKey = 'sk-fixture-only-never-a-real-credential';
 export const terminal = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 
+export function makeRuntimeRoot() { return mkdtemp(join(repo, '.dsh-test-runtime-')); }
+
 export async function setup(t, overrides = {}) {
   const base = await mkdtemp(join(tmpdir(), 'dsh-mcp-tests-'));
+  const runtimeRoot = await makeRuntimeRoot();
   const root = join(base, 'workspace');
   const outside = join(base, 'outside');
   await mkdir(root);
@@ -21,6 +24,7 @@ export async function setup(t, overrides = {}) {
   const env = {
     PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '',
     DSH_MCP_WORKSPACE_ROOTS: JSON.stringify([root]),
+    DSH_MCP_RUNTIME_ROOT: runtimeRoot,
     DSH_MCP_COMMAND: process.execPath,
     DSH_MCP_ARGS: JSON.stringify([fixture]),
     DEEPSEEK_API_KEY: fixtureKey,
@@ -38,6 +42,7 @@ export async function setup(t, overrides = {}) {
   t.after(async () => {
     await client.close();
     await rm(base, { recursive: true, force: true });
+    await rm(runtimeRoot, { recursive: true, force: true });
   });
   await client.connect(transport);
   return { client, transport, root, outside, base, env, errors, stderr: () => stderr };

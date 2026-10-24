@@ -6,18 +6,24 @@ import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fixture, fixtureKey, repo } from './helpers.mjs';
+import { fixture, fixtureKey, repo, makeRuntimeRoot } from './helpers.mjs';
 
 for (const disconnect of ['stdin EOF', 'stdout EPIPE']) {
 test(`stdio carries only JSON-RPC and ${disconnect} stops the worker and removes its home`, async t => {
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-mcp-disconnect-'));
+  const runtimeRoot = await makeRuntimeRoot();
   const child = spawn(process.execPath, [join(repo, 'dist/index.js')], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '',
       DSH_MCP_COMMAND: process.execPath, DSH_MCP_ARGS: JSON.stringify([fixture]),
+      DSH_MCP_RUNTIME_ROOT: runtimeRoot,
       DSH_MCP_WORKSPACE_ROOTS: JSON.stringify([workspace]), DEEPSEEK_API_KEY: fixtureKey },
   });
-  t.after(async () => { child.kill('SIGKILL'); await rm(workspace, { recursive: true, force: true }); });
+  t.after(async () => {
+    child.kill('SIGKILL');
+    await rm(workspace, { recursive: true, force: true });
+    await rm(runtimeRoot, { recursive: true, force: true });
+  });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk.toString(); });
   const frames = [];

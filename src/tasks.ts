@@ -3,7 +3,8 @@ import { isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { RequestPermissionRequest, RequestPermissionResponse, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpWorker } from './acp-worker.js';
-import { contains, workspace, type Config } from './config.js';
+import { workspace, type Config } from './config.js';
+import { contains } from './paths.js';
 import { redact, redactValue, SecretStream } from './redaction.js';
 import type { PermissionView, TaskInput, TaskStatus, TaskView, Worker, WorkerHooks } from './types.js';
 
