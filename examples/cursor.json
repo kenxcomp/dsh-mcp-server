@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "deepseek-harness": {
+      "type": "stdio",
+      "command": "/absolute/path/to/node",
+      "args": [
+        "--env-file=/absolute/protected.env",
+        "/absolute/path/to/dsh-mcp-server/dist/index.js"
+      ],
+      "env": {
+        "DSH_MCP_COMMAND": "/absolute/path/to/dsh",
+        "DSH_MCP_WORKSPACE_ROOTS": "[\"/absolute/path/to/project\"]",
+        "DSH_MCP_MODEL": "deepseek-v4-flash",
+        "DSH_MCP_PROVIDER": "deepseek-official"
+      }
+    }
+  }
+}

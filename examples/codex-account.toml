@@ -1,0 +1,14 @@
+# Reuse an existing DeepSeek account login saved by the official Harness.
+# The config contains a file reference, never the credential values.
+[mcp_servers.deepseek-harness]
+command = "/absolute/path/to/node"
+args = ["/absolute/path/to/dsh-mcp-server/dist/index.js"]
+startup_timeout_sec = 20
+tool_timeout_sec = 30
+
+[mcp_servers.deepseek-harness.env]
+DSH_MCP_COMMAND = "/absolute/path/to/dsh"
+DSH_MCP_WORKSPACE_ROOTS = '["/absolute/path/to/project"]'
+DSH_MCP_CREDENTIALS_FILE = "/absolute/path/to/.dsh/.credentials.yaml"
+DSH_MCP_PROVIDER = "deepseek-account"
+DSH_MCP_MODEL = "deepseek-flash"

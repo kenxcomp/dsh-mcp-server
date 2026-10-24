@@ -1,0 +1,26 @@
+{
+  "name": "dsh-mcp-server",
+  "version": "0.1.0",
+  "description": "Delegate scoped coding tasks to DeepSeek Harness over MCP and ACP",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/kenxcomp/dsh-mcp-server.git" },
+  "bin": { "dsh-mcp-server": "dist/index.js" },
+  "files": ["dist", "skills", "examples", "docs", "scripts", "README.md", "LICENSE"],
+  "engines": { "node": ">=24.9.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "check:package": "node scripts/check-git-package.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:harness": "npm run build && node scripts/smoke-harness.mjs",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": { "@types/node": "^22.19.0", "typescript": "^5.9.3" }
+}
