@@ -73,9 +73,10 @@ export class TaskManager {
       done: Promise.resolve(),
     };
     record.worker = this.factory({
-      ready: (sessionId, model) => {
+      ready: (sessionId, model, reasoningEffort) => {
         record.view.session_id = sessionId;
         record.view.model = model;
+        if (reasoningEffort !== undefined) record.view.reasoning_effort = reasoningEffort;
         record.view.status = record.permissions.size ? 'awaiting_permission' : 'running';
       },
       update: notification => this.update(record, notification),

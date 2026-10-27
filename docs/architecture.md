@@ -67,6 +67,8 @@ ACP 权限先经过任务范围校验。worker 从完整、未截断的 `tool_ca
 
 模型和 provider 默认固定为 `deepseek-v4-flash` / `deepseek-official`；可由 server 环境配置更改。官方 API key 和 dsh 账号登录是两种认证路径，账号登录示例使用 `deepseek-account` / `deepseek-flash`，按对应账号额度和计费规则调用。两条路径都必须匹配实际广告的模型选项，不做静默回退。主客户端用什么模型不在桥接器控制范围内。账户权限、网络可达性、模型计费和可用性仍由实际服务决定。
 
+任务可携带可选 `reasoning_effort`。ACP worker 在选择模型后，使用该响应内的 `reasoning_effort` 选项校验精确值，再通过 `session/set_config_option` 设置；确认 effort 与模型均匹配后才发送 prompt。不使用旧模型选项、不从提示词推断设置、不静默回退。省略参数时不发送 effort 设置；`TaskView.reasoning_effort` 仅回显 ACP 返回的非空当前值。每任务新进程保证选择不跨任务继承。
+
 ## 验证范围
 
 本地 ACP 替身测试验证 MCP/ACP 生命周期、输入边界和故障处理时，无需 DeepSeek 凭据。真实 harness 的协议握手测试能验证 launcher 和会话能力，但不能替代付费模型执行测试。发布或运行结果应分别说明本地协议测试、真实 harness 握手和真实模型调用各自是否完成。

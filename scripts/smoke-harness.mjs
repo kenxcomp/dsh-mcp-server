@@ -11,6 +11,8 @@ import { loadConfig } from '../dist/config.js';
 import { createServer } from '../dist/server.js';
 
 const marker = 'REAL_HARNESS_FILE_TOOL_OK';
+const effort = process.env.DSH_SMOKE_EFFORT || 'low';
+assert.ok(['off', 'low', 'high', 'max'].includes(effort));
 const root = await mkdtemp(join(tmpdir(), 'dsh-harness-smoke-'));
 const outside = await mkdtemp(join(tmpdir(), 'dsh-harness-outside-'));
 const runtimeRoot = await mkdtemp(join(process.cwd(), '.dsh-test-runtime-'));
@@ -35,6 +37,8 @@ const http = createHttpServer((request, response) => {
       assert.equal(request.method, 'POST');
       assert.equal(request.url, '/v1/messages');
       assert.equal(parsed.model, 'deepseek-v4-flash');
+      assert.deepEqual(parsed.thinking, { type: effort === 'off' ? 'disabled' : 'enabled' });
+      assert.deepEqual(parsed.output_config, effort === 'off' ? undefined : { effort });
       const operation = operations[requests.length - 1];
       const toolTurn = operation !== undefined;
       assert.ok(requests.length <= operations.length + 1, 'Unexpected extra model turn');
@@ -82,7 +86,7 @@ try {
   await client.connect(clientTransport);
   const submitted = await client.callTool({ name: 'dsh_submit_task', arguments: {
     workspace: root, objective: 'Create result.txt, verify it with cat, and confirm that outside writes and scope escalation are rejected.',
-    allowed_paths: ['result.txt'], timeout_seconds: 30,
+    allowed_paths: ['result.txt'], reasoning_effort: effort, timeout_seconds: 30,
   } });
   assert.equal(submitted.isError, undefined, JSON.stringify(submitted.content));
   const id = submitted.structuredContent.task_id;
@@ -93,6 +97,7 @@ try {
     assert.notEqual(result.status, 'awaiting_permission', 'In-scope writes need no escalation; scope-widening requests must be rejected');
   } while (!['completed', 'failed', 'cancelled', 'timed_out'].includes(result.status));
   assert.equal(result.status, 'completed', result.error);
+  assert.equal(result.reasoning_effort, effort);
   assert.equal(result.result, marker);
   assert.equal(await readFile(join(root, 'result.txt'), 'utf8'), `${marker}\n`);
   assert.equal(result.tool_calls.length, operations.length, JSON.stringify(result.tool_calls));
@@ -102,7 +107,7 @@ try {
   await assert.rejects(access(join(outside, 'escalated.txt')), { code: 'ENOENT' });
   assert.equal(requests.length, operations.length + 1);
   console.log(JSON.stringify({ verified: 'official-harness-with-local-model', model: result.model,
-    model_requests: requests.length, native_file_write: true, native_shell_check: true,
+    reasoning_effort: result.reasoning_effort, model_requests: requests.length, native_file_write: true, native_shell_check: true,
     outside_write_denied: true, scope_escalation_denied: true, paid_api_calls: 0 }));
 } finally {
   await tasks?.close();

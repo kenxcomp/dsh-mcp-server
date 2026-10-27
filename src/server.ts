@@ -17,6 +17,8 @@ export const submitSchema = z.object({
   acceptance_checks: z.array(z.string().trim().min(1).max(4096)).max(20).optional()
     .describe('Verification instructions; never executed directly by this MCP server'),
   timeout_seconds: z.number().int().min(1).max(3600).optional(),
+  reasoning_effort: z.string().trim().min(1).max(128).optional()
+    .describe('Optional exact Harness reasoning effort, e.g. off, low, high or max when advertised by the selected model. Omit to keep its default. Unsupported values fail before prompting; the confirmed effort is returned in task results.'),
 });
 
 export function createServer(config: Config, tasks = new TaskManager(config)): { server: McpServer; tasks: TaskManager } {

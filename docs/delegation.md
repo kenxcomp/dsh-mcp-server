@@ -25,9 +25,12 @@
     "不得修改其他文件、新增依赖、提交或推送"
   ],
   "acceptance_checks": ["npm test -- test/date.test.ts"],
+  "reasoning_effort": "low",
   "timeout_seconds": 600
 }
 ```
+
+`reasoning_effort` 可省略以保留 Harness 默认值。例行小任务可选 `low`，通常代码任务用 `high`，困难任务用 `max`，关闭思考用 `off`；必须是所选模型实际公布的档位。不支持的值会在 prompt 前失败；任务运行后从 `reasoning_effort` 回显核对确认值，各任务互不继承。
 
 先核对响应的 `workspace` 回显为本次授权目录的真实路径；不一致时停止并检查，不继续假定范围正确。从响应中取实际 `task_id`，再调用 `dsh_get_task`：
 

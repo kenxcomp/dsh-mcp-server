@@ -10,6 +10,9 @@ const sessionId = 'fixture-session';
 const permissions = new Map();
 let workspace;
 let selected = pro;
+let effort = 'high';
+const effortMode = process.argv[2] ?? '';
+const effortChanges = [];
 let cancelPrompt;
 
 function send(message) { process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`); }
@@ -17,10 +20,18 @@ function response(id, result) { send({ id, result }); }
 function update(value) { send({ method: 'session/update', params: { sessionId, update: value } }); }
 function message(text) { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }); }
 function configOptions() {
-  return [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: selected,
+  const options = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: selected,
     options: [{ group: 'deepseek-official', name: 'DeepSeek', options: [
       { value: pro, name: 'DeepSeek Pro' }, { value: flash, name: 'DeepSeek Flash' },
     ] }] }];
+  // Reasoning capabilities depend on the selected model, as in official ACP.
+  if (selected === flash && effortMode !== 'effort:missing') {
+    options.push({ id: 'reasoning_effort', name: 'Reasoning effort', category: 'thought_level',
+      type: 'select', currentValue: effort,
+      options: [{ group: 'thinking', name: 'Thinking', options:
+        ['off', 'low', 'high', 'max'].map(value => ({ value, name: value })) }] });
+  }
+  return options;
 }
 
 async function pauseStream() {
@@ -59,13 +70,27 @@ lines.on('line', async line => {
         response(id, { sessionId, configOptions: configOptions() });
         break;
       case 'session/set_config_option':
-        if (params.configId !== 'model' || params.value !== flash) throw new Error('Expected advertised Flash route');
-        selected = params.value;
+        if (params.configId === 'model') {
+          if (params.value !== flash) throw new Error('Expected advertised Flash route');
+          selected = params.value;
+          effort = 'high';
+        } else if (params.configId === 'reasoning_effort') {
+          if (selected !== flash || !['off', 'low', 'high', 'max'].includes(params.value)) {
+            throw new Error('Expected an advertised effort after Flash selection');
+          }
+          effortChanges.push(params.value);
+          if (effortMode !== 'effort:unconfirmed') effort = params.value;
+          if (effortMode === 'effort:model-changed') selected = pro;
+        } else throw new Error('Unexpected config option');
+        if (effortMode) await writeFile(join(workspace, '.fixture-effort.json'),
+          JSON.stringify({ selected, effort, effortChanges }));
         response(id, { configOptions: configOptions() });
         break;
       case 'session/prompt': {
         const prompt = params.prompt.map(item => item.text ?? '').join('');
         if (selected !== flash) throw new Error('Prompt sent before Flash selection');
+        if (effortMode) await writeFile(join(workspace, '.fixture-prompt.json'),
+          JSON.stringify({ selected, effort, effortChanges }));
         if (prompt.includes('fixture:crash')) {
           const secret = process.env.DEEPSEEK_API_KEY;
           if (prompt.includes('fixture:crash-secret-split')) {

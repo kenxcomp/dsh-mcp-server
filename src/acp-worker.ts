@@ -150,14 +150,33 @@ export class AcpWorker implements Worker {
     this.sessionId = session.sessionId;
     if (this.stopping) throw new Error('Task cancelled during session creation');
     const value = selectModel(session.configOptions ?? [], this.config.provider, this.config.model);
-    const selected = await connection.agent.request(methods.agent.session.setConfigOption, {
+    let selected = await connection.agent.request(methods.agent.session.setConfigOption, {
       sessionId: session.sessionId, configId: 'model', value,
     });
     if (selected.configOptions.find(item => item.id === 'model')?.currentValue !== value) {
       throw new Error('Harness did not confirm the requested model');
     }
+    // Model selection may change the available reasoning levels. Validate against
+    // the returned exact-model options, never the previous model or an API enum.
+    if (input.reasoning_effort !== undefined) {
+      const option = selected.configOptions.find(item => item.id === 'reasoning_effort');
+      const supported = option ? choices(option).map(item => item.value) : [];
+      if (!supported.includes(input.reasoning_effort)) {
+        throw new Error(`Harness did not advertise reasoning effort ${JSON.stringify(input.reasoning_effort)} for ${this.config.provider}/${this.config.model}. Available: ${JSON.stringify(supported.filter(Boolean))}`);
+      }
+      if (this.stopping) throw new Error('Task cancelled before reasoning selection');
+      selected = await connection.agent.request(methods.agent.session.setConfigOption, {
+        sessionId: session.sessionId, configId: 'reasoning_effort', value: input.reasoning_effort,
+      });
+      if (selected.configOptions.find(item => item.id === 'reasoning_effort')?.currentValue !== input.reasoning_effort
+        || selected.configOptions.find(item => item.id === 'model')?.currentValue !== value) {
+        throw new Error('Harness did not confirm the requested reasoning effort and model');
+      }
+    }
     if (this.stopping) throw new Error('Task cancelled before prompt');
-    this.hooks.ready(session.sessionId, `${this.config.provider}/${this.config.model}`);
+    const effort = selected.configOptions.find(item => item.id === 'reasoning_effort')?.currentValue;
+    this.hooks.ready(session.sessionId, `${this.config.provider}/${this.config.model}`,
+      typeof effort === 'string' && effort.length > 0 ? effort : undefined);
     const result = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId, prompt: [{ type: 'text', text: taskPrompt(input) }],
     });

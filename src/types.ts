@@ -7,12 +7,13 @@ export interface TaskInput {
   constraints?: string[];
   acceptance_checks?: string[];
   timeout_seconds?: number;
+  reasoning_effort?: string;
 }
 
 export type TaskStatus = 'starting' | 'running' | 'awaiting_permission' | 'completed' | 'failed' | 'cancelled' | 'timed_out';
 
 export interface WorkerHooks {
-  ready(sessionId: string, model: string): void;
+  ready(sessionId: string, model: string, reasoningEffort?: string): void;
   update(notification: SessionNotification): void;
   permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
 }
@@ -36,6 +37,7 @@ export interface TaskView {
   finished_at?: string;
   session_id?: string;
   model?: string;
+  reasoning_effort?: string;
   stop_reason?: string;
   result: string;
   output_truncated: boolean;

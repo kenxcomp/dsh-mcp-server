@@ -118,6 +118,7 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
   "allowed_paths": ["src/date.ts", "test/date.test.ts"],
   "constraints": ["保留已有用户修改", "不新增依赖，不提交，不推送"],
   "acceptance_checks": ["npm test -- test/date.test.ts"],
+  "reasoning_effort": "low",
   "timeout_seconds": 600
 }
 ```
@@ -125,6 +126,12 @@ codex mcp add deepseek-harness -- /absolute/path/to/node \
 将上述对象传给 `dsh_submit_task`，先核对返回的 `workspace` 与本次授权目录一致，取得 `task_id` 后用 `dsh_get_task({"task_id":"返回的任务 ID","wait_ms":10000})` 等待。遇到 `awaiting_permission` 时先查看 `pending_permissions`，根据用户已有授权判断具体请求，再调用 `dsh_respond_permission` 一次性批准或拒绝；授权不足时先向用户说明具体操作。不要因使用 delegation skill 自动批准所有权限。
 
 任务完成后主 agent 检查 `result`、`tool_calls`、`output_truncated` 和失败信息，并在实际工作区检查改动与验收结果。`acceptance_checks` 是给 worker 的指令，不是 server 自动执行的 shell 命令。
+
+### 按任务设置 Flash 推理强度
+
+`reasoning_effort` 是可选参数，省略时保留所选模型的 Harness 默认值。当前官方 Harness 的 DeepSeek 适配器提供 `off`（关闭思考）、`low`、`high`、`max`，默认通常为 `high`。例行小改动可用 `low`，一般代码任务用 `high`，困难排查可用 `max`；最终以该任务所选模型通过 ACP 实际公布的档位为准。API 参数说明见 [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)。
+
+桥接器先选模型，再验证并设置该模型公布的 `reasoning_effort`，确认后才发送任务 prompt。不支持的档位或确认失败会让任务以 `failed` 结束，不会静默改用其他档位；检查 `error` 获取可用值。任务进入 `running` 后，结果中的 `reasoning_effort` 回显 Harness 确认的当前值；若 Harness 仅提供未命名的默认值则省略。每个任务独立设置，不继承前一个任务；这只改变 worker 的推理强度。
 
 可将 [deepseek-delegate skill](skills/deepseek-delegate/SKILL.md) 复制到目标项目 `.agents/skills/deepseek-delegate/SKILL.md`，供支持此约定的 Codex、Cursor 等客户端发现。它也可以直接作为其他客户端的工作流提示；Claude Desktop 无须安装此 skill 才能调用 MCP 工具。
 
